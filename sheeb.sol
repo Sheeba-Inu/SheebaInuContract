@@ -146,11 +146,11 @@ abstract contract Ownable is Context {
 
 
 
-contract SheebaInu is Context,IERC20, Ownable{
+contract SHEEBA is Context,IERC20, Ownable{
     using Address for address;
 
-    string private _name = "Sheeba Inu";
-    string private _symbol = "SHEEB";
+    string private _name = "SHEEBA";
+    string private _symbol = "SHEEBA";
     uint8 private _decimals = 18;
     uint256 totalFeeFortx = 0;
       uint256 maxWalletTreshold = 5;
@@ -172,6 +172,8 @@ contract SheebaInu is Context,IERC20, Ownable{
     mapping (address => bool) botWallets;
     bool botTradeEnabled = false;
     bool checkWalletSize = true;
+    mapping (address => bool) private _liquidityHolders;
+    mapping (address => bool) private presaleAddresses;
     //15% buy tax 20% sell tax
 
     uint256 private buyliqFee = 0; //10
@@ -181,6 +183,7 @@ contract SheebaInu is Context,IERC20, Ownable{
     uint256 private buyprizePool = 0;//1
     uint256 private buyprevPrizePool = 1;
     uint256 GoldenDaycooldown = 0;
+    bool private tradeEnabled = false;
 
     
     uint256 private sellliqFee = 13;
@@ -221,7 +224,7 @@ contract SheebaInu is Context,IERC20, Ownable{
 
     constructor(){
         _balances[_msgSender()] = _totalSupply;
-          //0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D mainnet and all networks
+        //0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D mainnet and all networks
         IUniswapV2Router02 _uniRouter = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
         
         uniswapV2Pair = IUniswapV2Factory(_uniRouter.factory())
@@ -230,6 +233,9 @@ contract SheebaInu is Context,IERC20, Ownable{
         _excludedFromFees[owner()] = true;         
         _excludedFromFees[address(this)] = true;// exclude owner and contract instance from fees
         _router = _uniRouter;
+        _liquidityHolders[address(_router)] = true;
+        _liquidityHolders[owner()] = true;
+        _liquidityHolders[address(this)] = true;
         _setAutomatedMarketMakerPair(address(uniswapV2Pair), true);
         emit Transfer(address(0),_msgSender(),_totalSupply);
 
@@ -340,7 +346,7 @@ contract SheebaInu is Context,IERC20, Ownable{
             return buymktFee;
     }
     function currentbuyprizepoolfee() public view returns (uint256){
-            return buymktFee;
+            return buyprizePool;
     }
 
       function currentsellLiqFee() public view returns (uint256){
@@ -360,18 +366,19 @@ contract SheebaInu is Context,IERC20, Ownable{
     }
 
     function _transfer(address from, address to, uint256 amount) internal{
+        
         require(from != address(0), "BEP20: transfer from the zero address");
 		require(to != address(0), "BEP20: transfer to the zero address");
         require(amount > 0,"BEP20: transfered amount must be greater than zero");
         uint256 senderBalance = _balances[from];
         require(senderBalance >= amount, "BEP20: transfer amount exceeds balance");
-           if(from != owner() && to != owner())
-            require(amount <= maxTxAmount, "Transfer amount exceeds the maxTxAmount.");
-        if(to != uniswapV2Pair || to !=owner()) {
-        require(balanceOf(to) + amount < maxWalletAmount, "MCRON: Balance exceeds wallet size!");
+        if(tradeEnabled == false){
+            require(_liquidityHolders[to] || _liquidityHolders[from],"Cant trade, trade is disabled");
+        }
+        if(_liquidityHolders[to]==false && _liquidityHolders[from]==false){
+        require(amount <= maxTxAmount, "Transfer amount exceeds the maxTxAmount.");
         }
         uint256 inContractBalance = balanceOf(address(this));
-
         if(inContractBalance >=requiredTokensToSwap && 
 			!inSwapAndLiquify && 
 			from != uniswapV2Pair && 
@@ -451,9 +458,10 @@ contract SheebaInu is Context,IERC20, Ownable{
         mktTokens = 0;
         prizepoolTokens = 0;
         liqTokens = 0;
-
-            
-
+    }
+     function addLimitExempt(address newAddress)external onlyOwner{
+        _liquidityHolders[newAddress] = true;
+     
     }
     function swapTokensForETHmkt(uint256 amount)private {
         address[] memory path = new address[](2);
@@ -475,6 +483,21 @@ contract SheebaInu is Context,IERC20, Ownable{
       _transfer(address(this), prizePoolAddress, amount);
 
     }
+
+    function unstuckTokens (IERC20 tokenToClear, address payable destination, uint256 amount) public onlyOwner{
+        //uint256 contractBalance = tokenToClear.balanceOf(address(this));
+        tokenToClear.transfer(destination, amount);
+    }
+
+    function unstuckETH(address payable destination) public onlyOwner{
+        uint256 ethBalance = address(this).balance;
+        payable(destination).transfer(ethBalance);
+    }
+
+    function tradeStatus(bool status) public onlyOwner{
+        tradeEnabled = status;
+    }
+
     function swapAndLiquify(uint256 liqTokensPassed) private {
 		uint256 half = liqTokensPassed / 2;
 		uint256 otherHalf = liqTokensPassed - half;
@@ -511,7 +534,7 @@ contract SheebaInu is Context,IERC20, Ownable{
 			tokenAmount,
 			0,
 			0,
-			deadAddress,
+			deadAddress,// tr
 			block.timestamp
 		);
 	}
@@ -528,6 +551,7 @@ contract SheebaInu is Context,IERC20, Ownable{
 
 
 
+
     //Fees related functions
 
     function addToExcluded(address toExclude) public onlyOwner{  
@@ -537,7 +561,14 @@ contract SheebaInu is Context,IERC20, Ownable{
     function removeFromExcluded(address toRemove) public onlyOwner{
         _excludedFromFees[toRemove] = false;
     }
-    
+      function excludePresaleAddresses(address router, address presale) external onlyOwner {
+        
+        _liquidityHolders[address(router)] = true;
+        _liquidityHolders[presale] = true;
+        presaleAddresses[address(router)] = true;
+        presaleAddresses[presale] = true;
+       
+    }
 
     function startPresaleStatus()public onlyOwner{
         
@@ -591,6 +622,7 @@ contract SheebaInu is Context,IERC20, Ownable{
 
         emit SetAutomatedMarketMakerPair(pair, value);
     }
+
     function updatecurrentbuyliqFee(uint256 newAmount) public onlyOwner{
             buyliqFee = newAmount;
     }
@@ -598,7 +630,7 @@ contract SheebaInu is Context,IERC20, Ownable{
              buymktFee= newAmount;
     }
     function updatecurrentbuyprizepoolfee(uint256 newAmount) public onlyOwner{
-             buymktFee= newAmount;
+             buyprizePool= newAmount;
     }
 
       function updatecurrentsellLiqFee(uint256 newAmount) public onlyOwner{
@@ -611,9 +643,6 @@ contract SheebaInu is Context,IERC20, Ownable{
     function updatecurrentsellyprizepoolfee(uint256 newAmount) public onlyOwner{
              sellprizePool= newAmount;
     }
-        function updatecurrentsellDevfee(uint256 newAmount) public onlyOwner{
-             sellprizePool= newAmount;
-    }
     function currentMaxWallet() public view returns(uint256){
         return maxWalletAmount;
     }
@@ -624,6 +653,9 @@ contract SheebaInu is Context,IERC20, Ownable{
         swapTreshold = newVal;
         requiredTokensToSwap = _totalSupply*swapTreshold/1000;
         
+    }
+    function currentTradeStatus() public view returns (bool){
+        return tradeEnabled;   
     }
     function currentSwapTreshold() public view returns(uint256){
         return swapTreshold;
